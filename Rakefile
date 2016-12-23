@@ -1,18 +1,148 @@
 require "pathname"
 
-class Rakefile 
-	CPP_FILE_REGEX = /\.c((pp|xx)?|c)$/
+module Tools
+
+	class Base
+		attr_accessor :options
+		attr_reader :name, :type
+
+		def initialize type
+			@options = []
+			@type = type
+		end
+
+		def command
+			raise "Invalid #{type}"
+		end
+
+		def run *args
+			command(*args)
+		end
+	end
+
+	module GCC
+		attr_writer :object_file_extension
+
+		def paths
+			@paths ||= []
+		end
+
+		def paths= p
+			@paths = case p
+			when Array
+				p
+			else
+				[p]
+			end
+		end
+
+
+		def object_file_extension
+			@object_file_extension ||= ".o"
+		end
+
+		def name 
+			"gcc"
+		end
+	end
+
+	module GXX
+		include GCC
+
+		def name
+			"g++"
+		end
+	end
+
+	module Compiler
+		class Base < Tools::Base
+
+			def initialize
+				super(:compiler)
+			end
+
+			def source_file_extensions
+				raise "No extension file specified"
+			end
+		end
+
+		class GXX < Base
+			include Tools::GXX
+
+			def initialize
+				@name = "g++"
+			end
+
+			def command file, out = nil
+				[name, *options, *include_path, "-c", file] + (out ? ["-o", out] : [])
+			end
+
+			def include_path
+				paths.map { |p| "-I" + p }
+			end
+
+			def source_file_extensions
+				/\.c((pp|xx)?|c)$/
+			end
+		end
+	end
+
+	class Linker
+		class Base < Tools::Base
+			def initialize 
+				super(:linker)
+			end 
+		end
+
+		class GXX < Base
+			include Tools::GXX
+
+			def initialize
+				@name = "g++"
+			end
+
+			def command files, out
+				[name, *options, "-o", out, *files, *_libraries]
+			end
+
+			def library_path
+				paths.map { |p| "-L" + p }
+			end
+
+			def libraries
+				@libraries ||= []
+			end
+
+			private def _libraries
+				libraries.map { |l| "-l" + l }
+			end
+
+		end
+	end
+
+	module ArchiveManager
+		class Base < Tools::Base
+			def initialize
+				super(:archive_manager)
+			end
+		end
+
+		class Ar < Base
+			attr_reader :name
+			def initialize
+				@name = ["ar", "rvs"]
+			end
+		end
+	end
+end
+
+class Toolchain 
 	HPP_FILE_REGEX = /\.(h(((pp|xx)?|h)|inl))$/
 
-	attr_accessor :executable_name, :header_directory, :source_directory, :binary_directory, :build_directory,
-		:compiler, :compiler_flags, :compilation_options, :linker_options, :link, :linker, :link_path, :include_path, :obj_extension, :linker_flags
+	attr_accessor :working_directory, :executable_name, :header_directory, :source_directory, :binary_directory, :build_directory, :library_directory
 
 	def initialize
-		####################################################
-		# 
-		# 		Configuration
-		#
-		###################################################
+		@working_directory = nil
 
 		# Application name
 		@executable_name = "app"
@@ -22,27 +152,41 @@ class Rakefile
 		@source_directory = "src"
 		@binary_directory = "bin"
 		@build_directory = "build"
-
-		# Compiler configuration (gcc only right now)
-		@compiler = "g++"
-		@compiler_flags = "--std=c++1y -pthread -Wall -Wextra -pedantic"
-		@compilation_options = ""
-		@link = ""
-		@linker = "g++"
-		@linker_flags = @compiler_flags.dup
-		@link_path = "" # For additional path 
-		@include_path = ""
-
-		# Object file extension (why not)
-		@obj_extension = ".o"
-
+		@library_directory = "lib"
 	end
 
-	# Returns the 
+	def compile file, out = nil
+		compiler.paths |= [header_directory]
+		compiler.run(*([file, out].compact)) 
+	end
+
+	["compiler", "archive_manager", "linker"].each do |tag|
+		class_eval <<~EOS
+			def #{tag}
+				@#{tag} ||= Tools::#{tag.capitalize.gsub(/_([a-z])/) { $1.upcase } }::Base
+			end
+
+			def #{tag}= t
+				@#{tag} = case t
+				when Class
+					t.new
+				else
+					t
+				end
+			end
+			EOS
+	end
+
+	def link
+		linker.run(obj_files, exec_path)
+	end
+
+	# Returns a string containing a path to the executable to be built
 	def exec_path
-		@exec_path ||= (File.join binary_directory, executable_name).to_s
+		@exec_path ||= (File.join binary_directory, executable_name)
 	end
 
+	# Returns a Pathname containing 
 	def header_path
 		@header_path ||= Pathname.new(header_directory)
 	end
@@ -52,7 +196,7 @@ class Rakefile
 	end
 
 	def source_files
-		@source_files ||= Dir.glob(source_path + "**/*").reject { |f| f.to_s !~ CPP_FILE_REGEX }
+		@source_files ||= Dir.glob(source_path + "**/*").reject { |f| f.to_s !~ compiler.source_file_extensions }
 	end
 
 	def source_directory_structure
@@ -64,19 +208,32 @@ class Rakefile
 	end
 
 	def obj_files
-		@obj_files ||= source_files.map { |e| e.sub(CPP_FILE_REGEX, obj_extension).sub(source_directory, build_directory) }
+		@obj_files ||= source_files.map { |e| e.sub(compiler.source_file_extensions, obj_extension).sub(source_directory, build_directory) }
 	end
 
 	def included_files
 		@included_files ||= Pathname.glob(header_path + "**/*").map{|d|d.relative_path_from(header_path).to_s}.reject { |f| f.to_s !~ HPP_FILE_REGEX }
 	end
+	
+	def obj_extension
+		@obj_extension || @compiler.object_file_extension
+	end
+
+	def archive name
+		archive_manager.run name
+	end
+
 
 	# Finds the source file corresponding to the object file processed in parameters
+	#
 	def resolve_obj_source_file obj
 		o = Regexp.quote(obj.sub(obj_extension, "").sub(build_directory, source_directory))
 		raise "Conflicting source file names for #{obj}" if source_files.count { |e| e =~ /#{o}/ } > 1 
-		source_files.find { |e| e =~ /#{o}#{CPP_FILE_REGEX}/ } 
+		source_files.find { |e| e =~ /#{o}#{compiler.source_file_extensions}/ } 
 	end
+
+
+
 
 	# Returns a list of local modules included in the given file
 	def all_hpp_files cpp
@@ -92,11 +249,7 @@ class Rakefile
 		ret.select { |f| f =~ reg }.map { |f| (header_path + f).to_s }
 	end
 
-	####################################################
-	# 
-	# 		Utils
-	#
-	###################################################
+
 
 
 	# Build a list of all dependencies for an object file, including
@@ -122,7 +275,11 @@ class Rakefile
 	end
 end
 
-Config = Rakefile.new
+IDE = Toolchain.new
+IDE.compiler = Tools::Compiler::GXX.new
+IDE.linker = Tools::Linker::GXX.new
+
+IDE.compiler.options = ["--std=c++1y", "-pthread", "-Wall", "-Wextra", "-pedantic"]
 
 ####################################################
 # 
@@ -133,15 +290,15 @@ Config = Rakefile.new
 task :default => :build
 
 desc "Compile the files and build the executable"
-task :build => Config.exec_path 
+task :build => IDE.exec_path 
 
-file Config.exec_path => Config.obj_files + [Config.binary_directory] do
-	sh "#{Config.linker} #{Config.linker_flags} #{Config.linker_options} -o #{Config.exec_path} #{Config.obj_files.join(" ")} #{Config.link}"
+file IDE.exec_path => IDE.obj_files + [IDE.binary_directory] do
+	sh(*IDE.link)
 end
 
-directory Config.binary_directory
+directory IDE.binary_directory
 
-Config.obj_directory_structure.each { |d| directory d }
+IDE.obj_directory_structure.each { |d| directory d }
 
 desc "Rebuild the executable from scratches"
 task :rebuild => [:clean, :build]
@@ -157,25 +314,26 @@ namespace :build do
 end
 
 desc "Run the executable"
-task :run => Config.exec_path do
-	sh Config.exec_path
+task :run => IDE.exec_path do
+	sh IDE.exec_path
 end
 
-file Config.exec_path
+file IDE.exec_path
 
-# Rule for object files
+# Rule for object files.
+# Compile the source file into an object file
 #
-# Searches for associated source files and their includes then 
-rule Config.obj_extension => proc { |obj| Config.all_obj_dependencies(obj) } do |t|
-	sh "#{Config.compiler} #{Config.linker_flags} -I#{Config.header_directory} #{Config.compilation_options} -c #{t.prerequisites[-1]} -o #{t.name}"
+# +Dependencies+ the associated source file and its includes
+rule IDE.obj_extension => proc { |obj| IDE.all_obj_dependencies(obj) } do |t|
+	sh(*IDE.compile(t.prerequisites[-1], t.name))
 end
 
 desc "Remove all object files"
 task :clean do 
-	rm_f Config.obj_files
+	rm_f IDE.obj_files
 end
 
 desc "Clean all object files and remove the executable"
 task :purge => :clean do
-	rm_f Config.exec_path
+	rm_f IDE.exec_path
 end
