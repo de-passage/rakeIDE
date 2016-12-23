@@ -58,6 +58,15 @@ module Tools
 				options.delete("-pthread")
 			end
 		end
+
+		def header_file_extensions 
+			".h"
+		end
+
+		def source_file_extensions
+			".cpp"
+		end
+
 	end
 
 	module GXX
@@ -65,6 +74,14 @@ module Tools
 
 		def name
 			"g++"
+		end
+
+		def header_file_extensions
+			/\.(h(((pp|xx)?|h)|inl))$/
+		end
+
+		def source_file_extensions
+			/\.c((pp|xx)?|c)$/
 		end
 	end
 
@@ -80,13 +97,8 @@ module Tools
 			end
 		end
 
-		class GXX < Base
-			include Tools::GXX
-
-			def initialize
-				super
-				@name = "g++"
-			end
+		class GCC < Base 
+			include Tools::GCC
 
 			def command file, out = nil
 				[name, *options, *include_path, "-c", file] + (out ? ["-o", out] : [])
@@ -96,9 +108,10 @@ module Tools
 				paths.map { |p| "-I" + p }
 			end
 
-			def source_file_extensions
-				/\.c((pp|xx)?|c)$/
-			end
+		end
+
+		class GXX < GCC
+			include Tools::GXX
 		end
 	end
 
@@ -109,13 +122,8 @@ module Tools
 			end 
 		end
 
-		class GXX < Base
-			include Tools::GXX
-
-			def initialize
-				super
-				@name = "g++"
-			end
+		class GCC < Base
+			include Tools::GCC
 
 			def command files, out
 				[name, *options, "-o", out, *files, *_libraries]
@@ -132,7 +140,11 @@ module Tools
 			private def _libraries
 				libraries.map { |l| "-l" + l }
 			end
+		end
 
+
+		class GXX < GCC
+			include Tools::GXX
 		end
 	end
 
@@ -153,7 +165,6 @@ module Tools
 end
 
 class Toolchain 
-	HPP_FILE_REGEX = /\.(h(((pp|xx)?|h)|inl))$/
 
 	attr_accessor :working_directory, :executable_name, :header_directory, :source_directory, :binary_directory, :build_directory, :library_directory
 	attr_reader :tools
@@ -248,7 +259,7 @@ class Toolchain
 	end
 
 	def included_files
-		@included_files ||= Pathname.glob(header_path + "**/*").map{|d|d.relative_path_from(header_path).to_s}.reject { |f| f.to_s !~ HPP_FILE_REGEX }
+		@included_files ||= Pathname.glob(header_path + "**/*").map{|d|d.relative_path_from(header_path).to_s}.reject { |f| f.to_s !~ compiler.header_file_extensions }
 	end
 
 	def obj_extension
@@ -314,8 +325,6 @@ IDE.linker = Tools::Linker::GXX
 IDE.archive_manager = Tools::ArchiveManager::Ar
 
 IDE.compiler.options = ["--std=c++1y", "-Wall", "-Wextra", "-pedantic"]
-IDE.linker.libraries.concat ["sfml-graphics", "sfml-window", "sfml-system"]
-IDE.set multi_threaded: true
 
 ####################################################
 # 
