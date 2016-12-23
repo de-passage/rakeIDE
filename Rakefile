@@ -4,7 +4,7 @@ module Tools
 
 	class Base
 		attr_accessor :options, :safe_mode
-		attr_reader :name, :type
+		attr_reader :type
 
 		def initialize type
 			@options = []
@@ -108,6 +108,17 @@ module Tools
 				paths.map { |p| "-I" + p }
 			end
 
+			def source_dependencies cpp
+				ret = []
+				File.open(cpp) do |f|
+					f.each do |l|
+						if m = l.match(/#include\s+(?:"|<)(.+)(?:"|>).*/)
+							ret << m[1]
+						end
+					end
+				end
+				ret
+			end
 		end
 
 		class GXX < GCC
@@ -166,8 +177,9 @@ end
 
 class Toolchain 
 
-	attr_accessor :working_directory, :executable_name, :header_directory, :source_directory, :binary_directory, :build_directory, :library_directory
+	attr_accessor :working_directory, :executable_name, :header_directory, :source_directory, :build_directory, :library_directory, :default_build
 	attr_reader :tools
+	attr_writer :binary_directory, :build_type
 
 	def initialize
 		@working_directory = nil
@@ -181,6 +193,8 @@ class Toolchain
 		@binary_directory = "bin"
 		@build_directory = "build"
 		@library_directory = "lib"
+
+		@default_build = "release"
 	end
 
 	def tools
@@ -266,6 +280,14 @@ class Toolchain
 		@obj_extension || @compiler.object_file_extension
 	end
 
+	def binary_directory
+		File.join(@binary_directory, build_type)
+	end
+
+	def build_type
+		@build_type || default_build
+	end
+
 
 
 	# Finds the source file corresponding to the object file processed in parameters
@@ -280,18 +302,14 @@ class Toolchain
 
 
 	# Returns a list of local modules included in the given file
-	def all_hpp_files cpp
-		ret = []
-		File.open(cpp) do |f|
-			f.each do |l|
-				if m = l.match(/#include\s+(?:"|<)(.+)(?:"|>).*/)
-					ret << m[1]
-				end
-			end
-		end
+	def source_dependencies cpp
 		reg = /#{included_files.map { |hpp| Regexp.quote(hpp) }.join("|")}/
-		ret.select { |f| f =~ reg }.map { |f| (header_path + f).to_s }
+		compiler.
+			source_dependencies(cpp).
+			select { |f| f =~ reg }.
+			map { |f| (header_path + f).to_s }
 	end
+
 
 
 
@@ -302,14 +320,14 @@ class Toolchain
 	def all_obj_dependencies obj
 		cpp = resolve_obj_source_file(obj)
 		# Build a list of hpp files 
-		hpp = all_hpp_files(cpp)
+		hpp = source_dependencies(cpp)
 		loop do 
 			# Go one level deeper excluding those done already
 			new_files = []
 			hpp.each do |h| 
 				# We don't want to process twice the same file 
 				# to avoid infinite loops
-				new_files += (all_hpp_files(h) - hpp - new_files)
+				new_files += (source_dependencies(h) - hpp - new_files)
 			end
 			# repeat until nothing comes out
 			break if new_files == []
@@ -322,7 +340,6 @@ end
 IDE = Toolchain.new
 IDE.compiler = Tools::Compiler::GXX
 IDE.linker = Tools::Linker::GXX
-IDE.archive_manager = Tools::ArchiveManager::Ar
 
 IDE.compiler.options = ["--std=c++1y", "-Wall", "-Wextra", "-pedantic"]
 
@@ -331,6 +348,10 @@ IDE.compiler.options = ["--std=c++1y", "-Wall", "-Wextra", "-pedantic"]
 # 		Tasks
 #
 ###################################################
+
+task :environment, :working_directory, :build_type do |t, args|
+	args.with_defaults working_directory: nil, build_type: IDE.default_build
+end
 
 task :default => :build
 
