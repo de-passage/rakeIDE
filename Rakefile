@@ -5,7 +5,7 @@ class Rakefile
 	HPP_FILE_REGEX = /\.(h(((pp|xx)?|h)|inl))$/
 
 	attr_accessor :executable_name, :header_directory, :source_directory, :binary_directory, :build_directory,
-		:compiler, :compiler_flags, :compilation_options, :linker_options, :link, :link_path, :include_path, :obj_extension 
+		:compiler, :compiler_flags, :compilation_options, :linker_options, :link, :linker, :link_path, :include_path, :obj_extension, :linker_flags
 
 	def initialize
 		####################################################
@@ -163,8 +163,11 @@ end
 
 file Config.exec_path
 
+# Rule for object files
+#
+# Searches for associated source files and their includes then 
 rule Config.obj_extension => proc { |obj| Config.all_obj_dependencies(obj) } do |t|
-	sh "#{Config.compiler} #{Config.flags} -I#{Config.header_directory} #{Config.compilation_options} -c #{t.prerequisites[-1]} -o #{t.name}"
+	sh "#{Config.compiler} #{Config.linker_flags} -I#{Config.header_directory} #{Config.compilation_options} -c #{t.prerequisites[-1]} -o #{t.name}"
 end
 
 desc "Remove all object files"
@@ -176,6 +179,3 @@ desc "Clean all object files and remove the executable"
 task :purge => :clean do
 	rm_f Config.exec_path
 end
-
-desc "Shows some debug informations"
-task 
