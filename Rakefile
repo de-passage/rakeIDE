@@ -177,9 +177,9 @@ end
 
 class Toolchain 
 
-	attr_accessor :working_directory, :executable_name, :header_directory, :source_directory, :build_directory, :library_directory, :default_build
+	attr_accessor :working_directory, :executable_name, :default_build
 	attr_reader :tools
-	attr_writer :binary_directory, :build_type
+	attr_writer :binary_directory, :header_directory, :source_directory, :build_directory, :library_directory, :build_type
 
 	def initialize
 		@working_directory = nil
@@ -218,6 +218,8 @@ class Toolchain
 	end
 
 	def link
+		linker.paths |= [library_directory]
+		linker.paths |= [@library_directory]
 		linker.run(obj_files, exec_path)
 	end
 
@@ -227,6 +229,7 @@ class Toolchain
 
 	def compile file, out = nil
 		compiler.paths |= [header_directory]
+		compiler.paths |= [@header_directory]
 		compiler.run(*([file, out].compact)) 
 	end
 
@@ -244,7 +247,7 @@ class Toolchain
 
 	# Returns a string containing a path to the executable to be built
 	def exec_path
-		@exec_path ||= (File.join binary_directory, executable_name)
+		File.join binary_directory, executable_name
 	end
 
 	# Returns a Pathname containing 
@@ -281,7 +284,15 @@ class Toolchain
 	end
 
 	def binary_directory
-		File.join(@binary_directory, build_type)
+		File.join(*[working_directory, @binary_directory, build_type].compact)
+	end
+
+	["source", "build", "library", "header"].each do |tag|
+		class_eval <<~EOS
+			def #{tag}_directory
+				File.join(*[working_directory, @#{tag}_directory || "."].compact)
+			end
+		EOS
 	end
 
 	def build_type
@@ -303,6 +314,7 @@ class Toolchain
 
 	# Returns a list of local modules included in the given file
 	def source_dependencies cpp
+		return [] if included_files.empty?
 		reg = /#{included_files.map { |hpp| Regexp.quote(hpp) }.join("|")}/
 		compiler.
 			source_dependencies(cpp).
@@ -349,35 +361,39 @@ IDE.compiler.options = ["--std=c++1y", "-Wall", "-Wextra", "-pedantic"]
 #
 ###################################################
 
-task :environment, :working_directory, :build_type do |t, args|
-	args.with_defaults working_directory: nil, build_type: IDE.default_build
+task :target, :working_directory do |t, args|
+	wd = args[:working_directory]
+	raise "#{wd} is not a directory" unless wd.nil? or Dir.exist? wd
+	IDE.working_directory = wd
+
+
+	file IDE.exec_path => IDE.obj_files + [IDE.binary_directory] do
+		sh(*IDE.link)
+	end
+
+	directory IDE.binary_directory
+
+	IDE.obj_directory_structure.each { |d| directory d }
+
+	# Rule for object files.
+	# Compile the source file into an object file
+	#
+	# +Dependencies+ the associated source file and its includes
+	rule IDE.obj_extension => proc { |obj| IDE.all_obj_dependencies(obj) } do |ts|
+		sh(*IDE.compile(ts.prerequisites[-1], ts.name))
+	end
 end
 
 task :default => :build
 
 desc "Compile the files and build the executable"
-task :build => IDE.exec_path 
-
-file IDE.exec_path => IDE.obj_files + [IDE.binary_directory] do
-	sh(*IDE.link)
+task :build => "target" do
+	Rake::Task[IDE.exec_path].invoke
 end
 
-directory IDE.binary_directory
-
-IDE.obj_directory_structure.each { |d| directory d }
 
 desc "Rebuild the executable from scratches"
 task :rebuild => [:clean, :build]
-
-namespace :rebuild do 
-	desc "Rebuild the executable then run it"
-	task :run => [:rebuild, :run]
-end
-
-namespace :build do
-	desc "Build the executable then run it"
-	task :run => [:build, :run]
-end
 
 desc "Run the executable"
 task :run do
@@ -388,15 +404,6 @@ task :run do
 	sh IDE.exec_path
 end
 
-file IDE.exec_path
-
-# Rule for object files.
-# Compile the source file into an object file
-#
-# +Dependencies+ the associated source file and its includes
-rule IDE.obj_extension => proc { |obj| IDE.all_obj_dependencies(obj) } do |t|
-	sh(*IDE.compile(t.prerequisites[-1], t.name))
-end
 
 desc "Remove all object files"
 task :clean do 
