@@ -361,27 +361,27 @@ IDE.compiler.options = ["--std=c++1y", "-Wall", "-Wextra", "-pedantic"]
 #
 ###################################################
 
+desc "Defines the target project, defaults to the current directory if not called"
 task :target, :working_directory do |t, args|
+	# Sets the working directory for the IDE
 	wd = args[:working_directory]
 	raise "#{wd} is not a directory" unless wd.nil? or Dir.exist? wd
 	IDE.working_directory = wd
 
+	# Task definition needs to be delayed to account for the change in 
+	# internal state in IDE
 
+	# Define the task for the executable
 	file IDE.exec_path => IDE.obj_files + [IDE.binary_directory] do
 		sh(*IDE.link)
 	end
 
+	# Define the task for the binary directory
 	directory IDE.binary_directory
 
+	# Define the tasks for the subfolders of the build directory
 	IDE.obj_directory_structure.each { |d| directory d }
 
-	# Rule for object files.
-	# Compile the source file into an object file
-	#
-	# +Dependencies+ the associated source file and its includes
-	rule IDE.obj_extension => proc { |obj| IDE.all_obj_dependencies(obj) } do |ts|
-		sh(*IDE.compile(ts.prerequisites[-1], ts.name))
-	end
 end
 
 task :default => :build
@@ -390,7 +390,6 @@ desc "Compile the files and build the executable"
 task :build => "target" do
 	Rake::Task[IDE.exec_path].invoke
 end
-
 
 desc "Rebuild the executable from scratches"
 task :rebuild => [:clean, :build]
@@ -404,7 +403,6 @@ task :run do
 	sh IDE.exec_path
 end
 
-
 desc "Remove all object files"
 task :clean do 
 	rm_f IDE.obj_files
@@ -413,4 +411,12 @@ end
 desc "Clean all object files and remove the executable"
 task :purge => :clean do
 	rm_f IDE.exec_path
+end
+
+
+# Define the rule for the object files
+# This one uses a proc so the execution is already delayed enough to 
+# allow us to define it here (doesn't matter really)
+rule IDE.obj_extension => proc { |obj| IDE.all_obj_dependencies(obj) } do |ts|
+	sh(*IDE.compile(ts.prerequisites[-1], ts.name))
 end
