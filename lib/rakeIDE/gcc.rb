@@ -5,20 +5,6 @@ module Tools
 	module GCC
 		attr_writer :object_file_extension, :header_file_extensions, :source_file_extensions
 
-		# Paths to inspect
-		def paths
-			@paths ||= []
-		end
-
-		def paths= p
-			@paths = case p
-					 when Array
-						 p
-					 else
-						 [p]
-					 end
-		end
-
 
 		def object_file_extension
 			@object_file_extension ||= ".o"
@@ -53,7 +39,7 @@ module Tools
 	end
 
 	module Compiler
-		class GCC < Base 
+		class GCC < Tools::Compiler::Base 
 			include Tools::GCC
 
 			# Returns an array of individual items forming a command
@@ -63,7 +49,7 @@ module Tools
 
 			# Returns a list of option
 			def include_path
-				paths.map { |p| "-I" + p }
+				path.map { |p| "-I" + p }
 			end
 
 			# Compute the local dependencies of a file
@@ -82,15 +68,17 @@ module Tools
 	end
 
 	module Linker
-		class GCC < Base
+		class GCC < Tools::Linker::Base
 			include Tools::GCC
 
+			attr_writer :libraries
+
 			def command files, out
-				[name, *options, "-o", out, *files, *_libraries]
+				[name, *options, *library_path, "-o", out, *files, *_libraries]
 			end
 
 			def library_path
-				paths.map { |p| "-L" + p }
+				path.map { |p| "-L" + p }
 			end
 
 			def libraries

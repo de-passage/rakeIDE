@@ -1,6 +1,11 @@
 require_relative "rakeIDE/toolchain.rb"
 
-IDE = Toolchain.new
+module IDE
+	@@toolchain = Toolchain.new
+	def self.method_missing s, *args, &blck
+		@@toolchain.send(s, *args, &blck)
+	end
+end
 
 ####################################################
 # 
@@ -8,13 +13,20 @@ IDE = Toolchain.new
 #
 ###################################################
 
-desc "Defines the target project, defaults to the current directory if not called"
-task :target, :working_directory do |t, args|
+desc "Defines the source project, defaults to the current directory if not called"
+task :source, :working_directory do |_, args|
 	# Sets the working directory for the IDE
 	wd = args[:working_directory]
 	raise "#{wd} is not a directory" unless wd.nil? or Dir.exist? wd
-	IDE.working_directory = wd
+	IDE.working_directory = wd if wd
+end
 
+desc "Defines the target to build."
+task :target, :t do |_, args|
+	IDE.target = args[:t] || IDE.default_target
+end
+
+task :setup => ["source", :target] do
 	# Task definition needs to be delayed to account for the change in 
 	# internal state in IDE
 
@@ -24,10 +36,10 @@ task :target, :working_directory do |t, args|
 	end
 
 	# Define the task for the binary directory
-	directory IDE.binary_directory
+	directory IDE.binary_directory unless IDE.binary_directory == ""
 
 	# Define the tasks for the subfolders of the build directory
-	IDE.obj_directory_structure.each { |d| directory d }
+	IDE.obj_directory_structure.each { |d| directory d unless d == ""}
 
 	# Define the rule for the object files
 	rule IDE.obj_extension => proc { |obj| IDE.all_obj_dependencies(obj) } do |ts|
@@ -38,7 +50,7 @@ end
 task :default => :build
 
 desc "Compile the files and build the executable"
-task :build => "target" do
+task :build => :setup do
 	Rake::Task[IDE.exec_path].invoke
 end
 
@@ -46,7 +58,7 @@ desc "Rebuild the executable from scratches"
 task :rebuild => [:clean, :build]
 
 desc "Run the executable"
-task :run do
+task :run => :setup do
 	unless File.exist? IDE.exec_path
 		$stderr.puts "The executable #{IDE.exec_path} doesn't exist, please run 'rake build' first."
 		exit

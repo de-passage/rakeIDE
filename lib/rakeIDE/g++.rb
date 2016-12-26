@@ -21,6 +21,10 @@ module Tools
 	module Compiler
 		class GXX < GCC
 			include Tools::GXX
+
+			def options
+				@options ||= ["--std=c++1y", "-Wall", "-Wextra", "-pedantic"]
+			end
 		end
 	end
 

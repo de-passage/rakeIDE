@@ -1,12 +1,13 @@
 module Tools
 
 	class Base
-		attr_accessor :options, :safe_mode
+		attr_accessor :options, :target
 		attr_reader :type
 
 		def initialize type
 			@options = []
 			@type = type
+			@path = []
 		end
 
 		# To be implemented by derived classes
@@ -17,12 +18,32 @@ module Tools
 		# Returns an array of individual items forming a command 
 		# depending on the arguments
 		def run *args
-			command(*args)
+			command(*args).flatten
 		end
 
 		def method_missing s, *args, &blck
 			return if @safe_mode
 			super(s, *args, &blck)
+		end
+		
+		# Paths to inspect
+		def path
+			@path ||= []
+		end
+
+		def path= p
+			@path = case p
+					 when Array
+						 p
+					 else
+						 [p]
+					 end
+		end
+
+		def set_option name, value
+			@safe_mode = true
+			send("#{name}=", value)
+			@safe_mode = false
 		end
 	end
 
@@ -63,6 +84,10 @@ module Tools
 			attr_reader :name
 			def initialize
 				@name = ["ar", "rvs"]
+			end
+
+			def command files, target
+				[*name, target, *files]
 			end
 		end
 	end

@@ -3,9 +3,9 @@ require_relative "tools.rb"
 
 class Toolchain 
 
-	attr_accessor :working_directory, :executable_name, :default_build
-	attr_reader :tools
-	attr_writer :binary_directory, :header_directory, :source_directory, :build_directory, :library_directory, :build_type
+	attr_accessor :working_directory, :executable_name, :target_prefix
+	attr_reader :tools, :default_target
+	attr_writer :binary_directory, :header_directory, :source_directory, :build_directory, :library_directory
 
 	def initialize
 		@working_directory = nil
@@ -20,11 +20,13 @@ class Toolchain
 		@build_directory = "build"
 		@library_directory = "lib"
 
-		@default_build = "release"
+		@default_target = "release"
+		@tool_options = {}
+		@target_actions = {}
 	end
 
 	def tools
-		[ @compiler, @attr_accessor, @linker ].compact
+		[ @compiler, @archive_manager, @linker ].compact
 	end
 	["compiler", "archive_manager", "linker"].each do |tag|
 		class_eval <<~EOS
@@ -39,13 +41,17 @@ class Toolchain
 				else
 					t
 				end
+				@#{tag}.target = @default_target
+				@tool_options.each do |k,v|
+					t.set_option k, v
+				end
 			end
 		EOS
 	end
 
 	def link
-		linker.paths |= [library_directory]
-		linker.paths |= [@library_directory]
+		linker.path |= [library_directory]
+		linker.path |= [@library_directory]
 		linker.run(obj_files, exec_path)
 	end
 
@@ -54,22 +60,50 @@ class Toolchain
 	end
 
 	def compile file, out = nil
-		compiler.paths |= [header_directory]
-		compiler.paths |= [@header_directory]
+		compiler.path |= [header_directory]
+		compiler.path |= [@header_directory]
 		compiler.run(*([file, out].compact)) 
+	end
+
+	def available_targets= at
+		@available_targets = case at
+		when Array
+			at.map { |a| a.to_s }
+		else
+			[at.to_s]
+		end | [default_target]
+	end
+
+	def available_targets
+		@available_targets || [default_target]
+	end
+
+	def default_target= t
+		@default_target= t.to_s
+	end
+
+
+	def target= t
+		unless available_targets and !available_targets.include?(t.to_s)
+			@target = t.to_s
+			tools.each do |tool|
+				tool.target = target
+			end
+			act = @target_actions[target]
+			act.call if act
+		else 
+			$stderr.puts "Unavailable target [#{t.to_s}]"
+		end
 	end
 
 	def set hash
 		hash.each do |k, v|
 			tools.compact.each do |t| 
-				t.safe_mode = true
-				t.send("#{k}=", v)
-				t.safe_mode = false
+				t.set_option k, v
 			end
 		end
+		@tool_options.merge! hash
 	end
-
-
 
 	# Returns a string containing a path to the executable to be built
 	def exec_path
@@ -109,8 +143,16 @@ class Toolchain
 		@obj_extension || @compiler.object_file_extension
 	end
 
+	def target_prefix?
+		@target_prefix
+	end
+
+	def target_prefix
+		(@target_prefix and (@target_prefix.is_a?(Boolean) or @target_prefix == "")) ? target : @target_prefix
+	end
+
 	def binary_directory
-		File.join(*[working_directory, @binary_directory, build_type].compact)
+		File.join(*[working_directory, @binary_directory, (target_prefix? ? target_prefix : nil)].compact)
 	end
 
 	["source", "build", "library", "header"].each do |tag|
@@ -121,10 +163,13 @@ class Toolchain
 		EOS
 	end
 
-	def build_type
-		@build_type || default_build
+	def target
+		@target || default_target.to_s
 	end
 
+	def for_target t, &blck
+		@target_actions[t.to_s] = blck
+	end
 
 
 	# Finds the source file corresponding to the object file processed in parameters
@@ -136,8 +181,6 @@ class Toolchain
 	end
 
 
-
-
 	# Returns a list of local modules included in the given file
 	def source_dependencies cpp
 		return [] if included_files.empty?
@@ -147,8 +190,6 @@ class Toolchain
 			select { |f| f =~ reg }.
 			map { |f| (header_path + f).to_s }
 	end
-
-
 
 
 
