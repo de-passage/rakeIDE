@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
 	s.name        = 'rakeIDE'
-	s.version     = '0.1.2'
+	s.version     = '0.1.3'
 	s.date        = '2016-12-25'
 	s.summary     = "Rake based CLI IDE"
 	s.description = "Configurable rake based tool chain. Currently only featuring few options, WIP"

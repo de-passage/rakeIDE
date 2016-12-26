@@ -23,6 +23,7 @@ class Toolchain
 		@default_target = "release"
 		@tool_options = {}
 		@target_actions = {}
+		@target_prefix = true
 	end
 
 	def tools
@@ -148,11 +149,14 @@ class Toolchain
 	end
 
 	def target_prefix
-		(@target_prefix and (@target_prefix.is_a?(Boolean) or @target_prefix == "")) ? target : @target_prefix
+		return false if !target_prefix?
+		return target if @target_prefix == true
+		@target_prefix
 	end
 
 	def binary_directory
-		File.join(*[working_directory, @binary_directory, (target_prefix? ? target_prefix : nil)].compact)
+		pref = target_prefix
+		File.join(*[working_directory, @binary_directory, (pref ? pref : nil)].compact)
 	end
 
 	["source", "build", "library", "header"].each do |tag|
